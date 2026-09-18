@@ -42,6 +42,8 @@ export interface CursorPosition {
   username: string;
   x: number;
   y: number;
+  // 事件归属的画板，服务端广播时携带，用于校验是否当前画板
+  boardId?: string;
 }
 
 export interface CanvasTransform {

@@ -12,12 +12,13 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [activeBoard, setActiveBoard] = useState<Board | null>(null);
   const {
-    setBoard, updateCursor, removeCursor, setCursors, username
+    openBoard, closeBoard, setBoard, updateCursor, removeCursor, setCursors, username
   } = useWhiteboardStore();
 
   useEffect(() => {
     if (currentView === 'board' && activeBoard) {
-      setBoard(activeBoard);
+      // 打开画板：校验层数，恢复本画板自己的图层与缩放状态，清空上一画板残留
+      openBoard(activeBoard);
 
       socketService.connect();
       socketService.joinBoard(activeBoard._id, username);
@@ -36,26 +37,34 @@ const App: React.FC = () => {
       });
       socketService.onElementAdded((data: { element: BoardElement; layerIndex: number }) => {
         const { board: currentBoard } = useWhiteboardStore.getState();
-        if (currentBoard) {
-          const layers = [...currentBoard.layers];
-          layers[data.layerIndex] = {
-            ...layers[data.layerIndex],
-            elements: [...layers[data.layerIndex].elements, data.element]
-          };
-          setBoard({ ...currentBoard, layers });
-        }
+        // 校验画板与层序号，防止其他画板/过期状态的事件写进当前画板
+        if (!currentBoard || currentBoard._id !== activeBoard._id) return;
+        if (data.layerIndex < 0 || data.layerIndex >= currentBoard.layers.length) return;
+        const layers = [...currentBoard.layers];
+        layers[data.layerIndex] = {
+          ...layers[data.layerIndex],
+          elements: [...layers[data.layerIndex].elements, data.element]
+        };
+        setBoard({ ...currentBoard, layers });
       });
       socketService.onLayersUpdated((data: { layers: Layer[] }) => {
         const { board: currentBoard } = useWhiteboardStore.getState();
-        if (currentBoard) {
+        if (currentBoard && currentBoard._id === activeBoard._id) {
+          // setBoard 会按新的层数校验当前层序号
           setBoard({ ...currentBoard, layers: data.layers });
         }
       });
       socketService.onCanvasTransformed((data: { transform: CanvasTransform }) => {
-        useWhiteboardStore.getState().setCanvasTransform(data.transform);
+        const { board: currentBoard } = useWhiteboardStore.getState();
+        if (currentBoard && currentBoard._id === activeBoard._id) {
+          // 只应用到本地，不再回传，避免客户端之间来回广播
+          useWhiteboardStore.getState().applyCanvasTransform(data.transform);
+        }
       });
 
       return () => {
+        // 离开画板：保存本画板会话状态并断开连接，避免串到下一个画板
+        closeBoard();
         socketService.disconnect();
       };
     }
